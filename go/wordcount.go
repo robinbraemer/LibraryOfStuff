@@ -3,23 +3,19 @@ package main
 import (
 	"golang.org/x/tour/wc"
 	"strings"
-	"fmt"
 )
 
 func WordCount(s string) map[string]int {
-	m := make(map[string]int, len(s))
-	for _, w := range strings.Fields(s) {
-		if i, ex := m[w]; ex {
-			m[w] = i + 1
-		} else {
-			m[w] = 1
-		}
+	words := strings.Fields(s)
+	wordCountMap := make(map[string]int, len(s))
+	
+	for _, w := range words {
+		wordCountMap[w]++
 	}
 	
-	return m
+	return wordCountMap
 }
 
 func main() {
-	fmt.Println()
 	wc.Test(WordCount)
 }
