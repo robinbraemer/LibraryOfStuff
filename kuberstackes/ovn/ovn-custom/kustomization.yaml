@@ -1,0 +1,13 @@
+namespace: ovn
+resources:
+  - ns.yaml
+  - rbac.yaml
+  - ovn-central.yaml
+  - ovn-chassis.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: ovn
+
+images:
+  - name: kubeovn/kube-ovn
+    newTag: v1.5.0

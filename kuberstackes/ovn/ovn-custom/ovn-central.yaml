@@ -1,0 +1,176 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovn-nb
+  labels:
+    app.kubernetes.io/name: ovn-central
+spec:
+  ports:
+  - name: ovn-nb
+    port: 6641
+    protocol: TCP
+    targetPort: 6641
+  selector:
+    app.kubernetes.io/name: ovn-central
+    # See https://github.com/alauda/kube-ovn/blob/60afb4e9d9e25e28ca54e609e13f39d97b7c2f9f/dist/images/ovn-is-leader.sh#L19
+    ovn-nb-leader: "true"
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovn-sb
+  labels:
+    app.kubernetes.io/name: ovn-central
+spec:
+  ports:
+  - name: ovn-sb
+    port: 6642
+    protocol: TCP
+    targetPort: 6642
+  selector:
+    app.kubernetes.io/name: ovn-central
+    # See https://github.com/alauda/kube-ovn/blob/60afb4e9d9e25e28ca54e609e13f39d97b7c2f9f/dist/images/ovn-is-leader.sh#L31
+    ovn-sb-leader: "true"
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations:
+    kubernetes.io/description: |
+      An OVN central hosts ovn-northd, ovn-nb and ovn-sb on selected nodes.
+
+      The ovn-northd daemon is responsible for translating the high-level OVN
+      configuration into logical configuration consumable by daemons such as ovn-controller (on a Chassis).
+      The ovn-northd process talks to OVN Northbound- and Southbound- databases.
+
+      Running multiple ovn-northd daemons is supported and they will operate in active/passive mode.
+
+      See also: https://github.com/alauda/kube-ovn/blob/v1.5.0/dist/images/start-db.sh
+  name: ovn-central
+  labels:
+    app.kubernetes.io/name: ovn-central
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ovn-central
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ovn-central
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/ovn-central: "true"
+        kubernetes.io/os: linux
+      affinity:
+        # Even though we are a daemon set,
+        # require no other ovn-central on the same node.
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: ovn-central
+            topologyKey: kubernetes.io/hostname
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      serviceAccountName: ovn
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      containers:
+      - command:
+        - /kube-ovn/start-db.sh
+        env:
+        - name: ENABLE_SSL
+          value: "true"
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        image: kubeovn/kube-ovn
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - /kube-ovn/ovn-healthcheck.sh
+          failureThreshold: 5
+          initialDelaySeconds: 30
+          periodSeconds: 7
+          timeoutSeconds: 45
+        name: ovn-central
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - /kube-ovn/ovn-is-leader.sh
+          periodSeconds: 3
+          timeoutSeconds: 45
+        resources:
+          requests:
+            cpu: 500m
+            memory: 300Mi
+        securityContext:
+          capabilities:
+            add:
+            - SYS_NICE
+        volumeMounts:
+        - mountPath: /var/run/openvswitch
+          name: host-run-ovs
+        - mountPath: /var/run/ovn
+          name: host-run-ovn
+        - mountPath: /sys
+          name: host-sys
+          readOnly: true
+        - mountPath: /etc/openvswitch
+          name: host-config-openvswitch
+        - mountPath: /etc/ovn
+          name: host-config-ovn
+        - mountPath: /var/log/openvswitch
+          name: host-log-ovs
+        - mountPath: /var/log/ovn
+          name: host-log-ovn
+        - mountPath: /var/run/tls
+          name: ovn-tls
+      volumes:
+      - hostPath:
+          path: /run/openvswitch
+        name: host-run-ovs
+      - hostPath:
+          path: /run/ovn
+        name: host-run-ovn
+      - hostPath:
+          path: /sys
+        name: host-sys
+      - hostPath:
+          path: /etc/origin/openvswitch
+        name: host-config-openvswitch
+      - hostPath:
+          path: /etc/origin/ovn
+        name: host-config-ovn
+      - hostPath:
+          path: /var/log/openvswitch
+        name: host-log-ovs
+      - hostPath:
+          path: /var/log/ovn
+        name: host-log-ovn
+      - name: ovn-tls
+        secret:
+          optional: false
+          secretName: ovn-tls
+---

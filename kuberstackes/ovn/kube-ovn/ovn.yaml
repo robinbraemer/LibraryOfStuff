@@ -1,0 +1,359 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovn
+  namespace: ovn
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ovn
+  namespace: ovn
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - patch
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ovn
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ovn
+subjects:
+  - kind: ServiceAccount
+    name: ovn
+    namespace: ovn
+---
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
+  name: kube-ovn
+  namespace: ovn
+spec:
+  allowPrivilegeEscalation: true
+  allowedCapabilities:
+  - '*'
+  fsGroup:
+    rule: RunAsAny
+  hostIPC: true
+  hostNetwork: true
+  hostPID: true
+  hostPorts:
+  - max: 65535
+    min: 0
+  privileged: true
+  runAsUser:
+    rule: RunAsAny
+  seLinux:
+    rule: RunAsAny
+  supplementalGroups:
+    rule: RunAsAny
+  volumes:
+  - '*'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovn-config
+  namespace: ovn
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovn-nb
+  namespace: ovn
+spec:
+  ports:
+  - name: ovn-nb
+    port: 6641
+    protocol: TCP
+    targetPort: 6641
+  selector:
+    app: ovn-central
+    ovn-nb-leader: "true"
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovn-sb
+  namespace: ovn
+spec:
+  ports:
+  - name: ovn-sb
+    port: 6642
+    protocol: TCP
+    targetPort: 6642
+  selector:
+    app: ovn-central
+    ovn-sb-leader: "true"
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kubernetes.io/description: |
+      OVN components: northd, nb and sb.
+  name: ovn-central
+  namespace: ovn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ovn-central
+  strategy:
+    rollingUpdate:
+      maxSurge: 0%
+      maxUnavailable: 100%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: ovn-central
+        component: network
+        type: infra
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: ovn-central
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - command:
+        - /kube-ovn/start-db.sh
+        env:
+        - name: ENABLE_SSL
+          value: "true"
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        image: kubeovn/kube-ovn:v1.5.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - /kube-ovn/ovn-healthcheck.sh
+          failureThreshold: 5
+          initialDelaySeconds: 30
+          periodSeconds: 7
+          timeoutSeconds: 45
+        name: ovn-central
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - /kube-ovn/ovn-is-leader.sh
+          periodSeconds: 3
+          timeoutSeconds: 45
+        resources:
+          requests:
+            cpu: 500m
+            memory: 300Mi
+        securityContext:
+          capabilities:
+            add:
+            - SYS_NICE
+        volumeMounts:
+        - mountPath: /var/run/openvswitch
+          name: host-run-ovs
+        - mountPath: /var/run/ovn
+          name: host-run-ovn
+        - mountPath: /sys
+          name: host-sys
+          readOnly: true
+        - mountPath: /etc/openvswitch
+          name: host-config-openvswitch
+        - mountPath: /etc/ovn
+          name: host-config-ovn
+        - mountPath: /var/log/openvswitch
+          name: host-log-ovs
+        - mountPath: /var/log/ovn
+          name: host-log-ovn
+        - mountPath: /var/run/tls
+          name: kube-ovn-tls
+      hostNetwork: true
+      nodeSelector:
+        kube-ovn/role: master
+        kubernetes.io/os: linux
+      priorityClassName: system-node-critical
+      serviceAccountName: ovn
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      volumes:
+      - hostPath:
+          path: /run/openvswitch
+        name: host-run-ovs
+      - hostPath:
+          path: /run/ovn
+        name: host-run-ovn
+      - hostPath:
+          path: /sys
+        name: host-sys
+      - hostPath:
+          path: /etc/origin/openvswitch
+        name: host-config-openvswitch
+      - hostPath:
+          path: /etc/origin/ovn
+        name: host-config-ovn
+      - hostPath:
+          path: /var/log/openvswitch
+        name: host-log-ovs
+      - hostPath:
+          path: /var/log/ovn
+        name: host-log-ovn
+      - name: kube-ovn-tls
+        secret:
+          optional: true
+          secretName: kube-ovn-tls
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations:
+    kubernetes.io/description: |
+      This daemon set launches the openvswitch daemon.
+  name: ovs-ovn
+  namespace: ovn
+spec:
+  selector:
+    matchLabels:
+      app: ovs
+  template:
+    metadata:
+      labels:
+        app: ovs
+        component: network
+        type: infra
+    spec:
+      containers:
+      - command:
+        - /kube-ovn/start-ovs.sh
+        env:
+        - name: ENABLE_SSL
+          value: "true"
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: HW_OFFLOAD
+          value: "false"
+        - name: KUBE_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        image: kubeovn/kube-ovn:v1.5.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - /kube-ovn/ovs-healthcheck.sh
+          failureThreshold: 5
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 45
+        name: openvswitch
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - /kube-ovn/ovs-healthcheck.sh
+          periodSeconds: 5
+          timeoutSeconds: 45
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 800Mi
+          requests:
+            cpu: 200m
+            memory: 300Mi
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        volumeMounts:
+        - mountPath: /lib/modules
+          name: host-modules
+          readOnly: true
+        - mountPath: /var/run/openvswitch
+          name: host-run-ovs
+        - mountPath: /var/run/ovn
+          name: host-run-ovn
+        - mountPath: /sys
+          name: host-sys
+          readOnly: true
+        - mountPath: /etc/openvswitch
+          name: host-config-openvswitch
+        - mountPath: /etc/ovn
+          name: host-config-ovn
+        - mountPath: /var/log/openvswitch
+          name: host-log-ovs
+        - mountPath: /var/log/ovn
+          name: host-log-ovn
+        - mountPath: /var/run/tls
+          name: kube-ovn-tls
+      hostNetwork: true
+      hostPID: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      priorityClassName: system-node-critical
+      serviceAccountName: ovn
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      volumes:
+      - hostPath:
+          path: /lib/modules
+        name: host-modules
+      - hostPath:
+          path: /run/openvswitch
+        name: host-run-ovs
+      - hostPath:
+          path: /run/ovn
+        name: host-run-ovn
+      - hostPath:
+          path: /sys
+        name: host-sys
+      - hostPath:
+          path: /etc/origin/openvswitch
+        name: host-config-openvswitch
+      - hostPath:
+          path: /etc/origin/ovn
+        name: host-config-ovn
+      - hostPath:
+          path: /var/log/openvswitch
+        name: host-log-ovs
+      - hostPath:
+          path: /var/log/ovn
+        name: host-log-ovn
+      - name: kube-ovn-tls
+        secret:
+          optional: true
+          secretName: kube-ovn-tls
+  updateStrategy:
+    type: OnDelete

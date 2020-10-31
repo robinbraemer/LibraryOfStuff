@@ -1,0 +1,8 @@
+namespace: kube-ovn
+resources:
+  # Kube-OVN related CRDs
+  - https://raw.githubusercontent.com/alauda/kube-ovn/release-1.5/yamls/crd.yaml
+  # Native OVS and OVN components
+  - https://raw.githubusercontent.com/alauda/kube-ovn/release-1.5/yamls/ovn.yaml
+  # Kube-OVN Controller and CNI plugins
+  - https://raw.githubusercontent.com/alauda/kube-ovn/release-1.5/yamls/kube-ovn.yaml
