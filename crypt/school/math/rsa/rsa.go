@@ -1,9 +1,8 @@
-package main
+package rsa
 
 import (
-	"crypto/rand"
-	"fmt"
 	"math/big"
+	"stuff/util"
 )
 
 type PrivateKey struct {
@@ -31,23 +30,20 @@ func GenerateKey(bits int) *PrivateKey {
 	// a hoch prime1-1 = 1 mod prime1
 	//
 	// phi -> eulersche Phi-Funktion
-	// phi(N) = Anzahl Teilerfremnder Zahlen kleiner N
+	// phi(N) = Anzahl Teilerfremder Zahlen kleiner N
 	// a hoch phi(N) = a mod N
 	// N = prime1 * prime2
 	// m = phi(N) = (prime1-1) * (prime2-1)
 
-	prime1, prime2 := prime(bits), prime(bits)
+	prime1, prime2 := util.RandomPrime(bits), util.RandomPrime(bits)
 	n := newInt().Mul(prime1, prime2)
 
 	one := big.NewInt(1) // constant
 	// m = (prime1-1)(prime2-1)
-	m := big.NewInt(0).Mul(
-		newInt().Sub(prime1, one),
-		newInt().Sub(prime2, one),
-	)
+	m := CalcM(prime1, prime2)
 
 	e := big.NewInt(int64(bits))
-	for gcd(e, m).Cmp(one) > 0 { // while gcd(E, m) > 1
+	for util.GCD(e, m).Cmp(one) > 0 { // while gcd(E, m) > 1
 		e.Add(e, one)
 	}
 	d := newInt().ModInverse(e, m)
@@ -61,32 +57,12 @@ func GenerateKey(bits int) *PrivateKey {
 	}
 }
 
+// m = (p-1)*(q-1)
+func CalcM(p, q *big.Int) *big.Int {
+	return big.NewInt(0).Mul(
+		newInt().Sub(p, util.One),
+		newInt().Sub(q, util.One),
+	)
+}
+
 func newInt() *big.Int { return &big.Int{} }
-
-func prime(bits int) *big.Int {
-	p, err := rand.Prime(rand.Reader, bits)
-	if err != nil {
-		panic(fmt.Sprintf("gen prime error: %v", err))
-	}
-	return p
-}
-
-func gcd(a, b *big.Int) *big.Int {
-	return big.NewInt(0).GCD(&big.Int{}, &big.Int{}, a, b)
-}
-
-func xOfGcd(a, b *big.Int) (x *big.Int) {
-	x = big.NewInt(0)
-	big.NewInt(0).GCD(x, &big.Int{}, a, b)
-	return
-}
-
-// greatest common divisor (GCD) via Euclidean algorithm
-func gcd2(a, b int) int {
-	for b != 0 {
-		t := b
-		b = a % b
-		a = t
-	}
-	return a
-}

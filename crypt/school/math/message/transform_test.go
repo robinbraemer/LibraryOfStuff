@@ -1,4 +1,4 @@
-package main
+package message
 
 import (
 	"github.com/stretchr/testify/require"
@@ -8,5 +8,5 @@ import (
 func TestTrans(t *testing.T) {
 	require.Equal(t,
 		"Hallo",
-		toMessage(fromMessage("Hallo")))
+		ToMessage(FromMessage("Hallo")))
 }
